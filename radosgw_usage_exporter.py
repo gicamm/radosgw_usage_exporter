@@ -60,7 +60,7 @@ class RADOSGWCollector(object):
 
         # setup dict for aggregating bucket usage accross "bins"
         self.usage_dict = defaultdict(dict)
-
+        self.user_buckets = defaultdict(dict)
         rgw_usage = self._request_data(query='usage', args='show-summary=True')
         rgw_bucket = self._request_data(query='bucket', args='stats=True')
         rgw_users = self._get_rgw_users()
@@ -70,8 +70,6 @@ class RADOSGWCollector(object):
             for entry in rgw_usage['entries']:
                 self._get_usage(entry)
             self._update_usage_metrics()
-            for entry in rgw_usage['summary']:
-                self._update_usage_summary_metrics(entry)
 
         if rgw_bucket:
             for bucket in rgw_bucket:
@@ -81,6 +79,11 @@ class RADOSGWCollector(object):
             for user in rgw_users:
                 self._get_user_quota(user)
                 self._get_user_info(user)
+
+        # Update summary
+        if rgw_usage:
+            for entry in rgw_usage['summary']:
+                self._update_usage_summary_metrics(entry)
 
         duration = time.time() - start
         self._prometheus_metrics['scrape_duration_seconds'].add_metric(
@@ -237,6 +240,11 @@ class RADOSGWCollector(object):
                                   'Number of successful operations',
                                   labels=["user", "cluster"]),
 
+            'user_total_buckets':
+                GaugeMetricFamily('radosgw_usage_user_total_buckets',
+                                  'Number of buckets',
+                                  labels=["user", "cluster"]),
+
             'scrape_duration_seconds':
                 GaugeMetricFamily('radosgw_usage_scrape_duration_seconds',
                                   'Ammount of time each scrape takes',
@@ -328,6 +336,10 @@ class RADOSGWCollector(object):
             self._prometheus_metrics['user_total_successful_ops'].add_metric(
                 [user, self.cluster_name], summary['total']['successful_ops'])
 
+        if user in self.user_buckets:
+            self._prometheus_metrics['user_total_buckets'].add_metric(
+                [user, self.cluster_name], self.user_buckets[user])
+
     def _get_bucket_usage(self, bucket):
         """
         Method get actual bucket usage (in bytes).
@@ -344,6 +356,9 @@ class RADOSGWCollector(object):
             bucket_usage_bytes = 0
             bucket_utilized_bytes = 0
             bucket_usage_objects = 0
+            if bucket_owner not in self.user_buckets:
+                self.user_buckets[bucket_owner] = 0
+            self.user_buckets[bucket_owner] = self.user_buckets[bucket_owner] + 1
 
             if bucket['usage'] and 'rgw.main' in bucket['usage']:
                 # Prefer bytes, instead kbytes
