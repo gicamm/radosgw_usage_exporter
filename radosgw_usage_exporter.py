@@ -230,10 +230,30 @@ class RADOSGWCollector(object):
                                   'Number of bytes received',
                                   labels=["user", "cluster"]),
 
+            'user_bytes_sent':
+                GaugeMetricFamily('radosgw_usage_user_bytes_sent',
+                                  'Number of bytes sent',
+                                  labels=["user", "cluster", "category"]),
+
+            'user_bytes_received':
+                GaugeMetricFamily('radosgw_usage_user_bytes_received',
+                                  'Number of bytes received',
+                                  labels=["user", "cluster", "category"]),
+
             'user_total_ops':
                 GaugeMetricFamily('radosgw_usage_user_total_ops',
                                   'Number of operations',
                                   labels=["user", "cluster"]),
+
+            'user_ops':
+                GaugeMetricFamily('radosgw_usage_user_ops',
+                                  'Number of operations',
+                                  labels=["user", "cluster", "category"]),
+
+            'user_successful_ops':
+                GaugeMetricFamily('radosgw_usage_user_successful_ops',
+                                  'Number of operations',
+                                  labels=["user", "cluster", "category"]),
 
             'user_total_successful_ops':
                 GaugeMetricFamily('radosgw_usage_user_total_successful_ops',
@@ -325,6 +345,17 @@ class RADOSGWCollector(object):
         # Luminous
         elif 'user' in summary:
             user = summary['user']
+
+        if 'categories' in summary:
+            for category in summary['categories']:
+                self._prometheus_metrics['user_bytes_sent'].add_metric(
+                    [user, self.cluster_name, category['category']], category['bytes_sent'])
+                self._prometheus_metrics['user_bytes_received'].add_metric(
+                    [user, self.cluster_name, category['category']], category['bytes_received'])
+                self._prometheus_metrics['user_ops'].add_metric(
+                    [user, self.cluster_name, category['category']], category['ops'])
+                self._prometheus_metrics['user_successful_ops'].add_metric(
+                    [user, self.cluster_name, category['category']], category['successful_ops'])
 
         if 'total' in summary:
             self._prometheus_metrics['user_total_bytes_sent'].add_metric(
