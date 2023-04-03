@@ -89,6 +89,12 @@ class RADOSGWCollector(object):
         self._prometheus_metrics['scrape_duration_seconds'].add_metric(
             [], duration)
 
+        self._prometheus_metrics['total_users'].add_metric(
+            [], len(rgw_users))
+
+        self._prometheus_metrics['total_buckets'].add_metric(
+            [], len(rgw_bucket))
+
         for metric in list(self._prometheus_metrics.values()):
             yield metric
 
@@ -262,12 +268,23 @@ class RADOSGWCollector(object):
 
             'user_total_buckets':
                 GaugeMetricFamily('radosgw_usage_user_total_buckets',
-                                  'Number of buckets',
+                                  'Number of buckets per user',
                                   labels=["user", "cluster"]),
 
             'scrape_duration_seconds':
                 GaugeMetricFamily('radosgw_usage_scrape_duration_seconds',
                                   'Ammount of time each scrape takes',
+                                  labels=[]),
+
+            'total_buckets':
+                GaugeMetricFamily('radosgw_usage_total_buckets',
+                                  'Number of buckets',
+                                  labels=[]),
+
+
+            'total_users':
+                GaugeMetricFamily('radosgw_usage_total_users',
+                                  'Number of users',
                                   labels=[])
         }
 
