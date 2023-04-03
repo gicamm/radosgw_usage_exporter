@@ -354,7 +354,7 @@ class RADOSGWCollector(object):
                                   labels=[]),
 
             'total_successful_ops':
-                GaugeMetricFamily('radosgw_usage_successful_ops',
+                GaugeMetricFamily('radosgw_usage_total_successful_ops',
                                   'Number of successful operations',
                                   labels=[]),
 
