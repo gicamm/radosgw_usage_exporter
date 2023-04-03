@@ -55,6 +55,15 @@ class RADOSGWCollector(object):
         """
 
         start = time.time()
+
+        self._total_objects = 0
+        self._total_bytes = 0
+        self._total_bytes_sent = 0
+        self._total_bytes_received = 0
+        self._total_ops = 0
+        self._total_successful_ops = 0
+
+
         # setup empty prometheus metrics
         self._setup_empty_prometheus_metrics()
 
@@ -94,6 +103,24 @@ class RADOSGWCollector(object):
 
         self._prometheus_metrics['total_buckets'].add_metric(
             [], len(rgw_bucket))
+
+        self._prometheus_metrics['total_objects'].add_metric(
+            [], self._total_objects)
+
+        self._prometheus_metrics['total_bytes'].add_metric(
+            [], self._total_bytes)
+
+        self._prometheus_metrics['total_bytes_sent'].add_metric(
+            [], self._total_bytes_sent)
+
+        self._prometheus_metrics['total_bytes_received'].add_metric(
+            [], self._total_bytes_received)
+
+        self._prometheus_metrics['total_ops'].add_metric(
+            [], self._total_ops)
+
+        self._prometheus_metrics['total_successful_ops'].add_metric(
+            [], self._total_successful_ops)
 
         for metric in list(self._prometheus_metrics.values()):
             yield metric
@@ -281,11 +308,38 @@ class RADOSGWCollector(object):
                                   'Number of buckets',
                                   labels=[]),
 
-
             'total_users':
                 GaugeMetricFamily('radosgw_usage_total_users',
                                   'Number of users',
-                                  labels=[])
+                                  labels=[]),
+
+            'total_objects':
+                GaugeMetricFamily('radosgw_usage_total_objects',
+                                  'Usage of objects by user',
+                                  labels=[]),
+            'total_bytes':
+                GaugeMetricFamily('radosgw_usage_total_bytes',
+                                  'Usage of bytes by user',
+                                  labels=[]),
+            'total_bytes_sent':
+                GaugeMetricFamily('radosgw_usage_total_bytes_sent',
+                                  'Number of bytes sent',
+                                  labels=[]),
+
+            'total_bytes_received':
+                GaugeMetricFamily('radosgw_usage_total_bytes_received',
+                                  'Number of bytes received',
+                                  labels=[]),
+
+            'total_ops':
+                GaugeMetricFamily('radosgw_usage_total_ops',
+                                  'Number of operations',
+                                  labels=[]),
+
+            'total_successful_ops':
+                GaugeMetricFamily('radosgw_usage_user_successful_ops',
+                                  'Number of successful operations',
+                                  labels=[]),
         }
 
     def _get_usage(self, entry):
@@ -377,12 +431,19 @@ class RADOSGWCollector(object):
         if 'total' in summary:
             self._prometheus_metrics['user_total_bytes_sent'].add_metric(
                 [user, self.cluster_name], summary['total']['bytes_sent'])
+            self._total_bytes_sent += summary['total']['bytes_sent']
+
             self._prometheus_metrics['user_total_bytes_received'].add_metric(
                 [user, self.cluster_name], summary['total']['bytes_received'])
+            self._total_bytes_received += summary['total']['bytes_received']
+
             self._prometheus_metrics['user_total_ops'].add_metric(
                 [user, self.cluster_name], summary['total']['ops'])
+            self._total_ops += summary['total']['ops']
+
             self._prometheus_metrics['user_total_successful_ops'].add_metric(
                 [user, self.cluster_name], summary['total']['successful_ops'])
+            self._total_successful_ops += summary['total']['successful_ops']
 
         if user in self.user_buckets:
             self._prometheus_metrics['user_total_buckets'].add_metric(
@@ -535,8 +596,11 @@ class RADOSGWCollector(object):
         if 'stats' in user_info:
             self._prometheus_metrics['user_total_bytes'].add_metric(
                 [user, self.cluster_name], user_info['stats']['size_actual'])
+            self._total_bytes += user_info['stats']['size_actual']
+
             self._prometheus_metrics['user_total_objects'].add_metric(
                 [user, self.cluster_name], user_info['stats']['num_objects'])
+            self._total_objects += user_info['stats']['num_objects']
 
 
 def parse_args():
