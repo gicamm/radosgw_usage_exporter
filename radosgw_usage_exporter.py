@@ -90,10 +90,15 @@ class RADOSGWCollector(object):
                 self._get_user_quota(user)
                 self._get_user_info(user)
 
-        # Update summary
+        # Update user summary
         if rgw_usage:
             for entry in rgw_usage['summary']:
                 self._update_usage_summary_metrics(entry)
+
+        # Update bucket summary
+        if rgw_usage:
+            for entry in rgw_usage['entries']:
+                self._update_bucket_usage_summary_metrics(entry)
 
         duration = time.time() - start
         self._prometheus_metrics['scrape_duration_seconds'].add_metric(
@@ -214,6 +219,22 @@ class RADOSGWCollector(object):
                 GaugeMetricFamily('radosgw_usage_bucket_bytes',
                                   'Bucket used bytes',
                                   labels=["bucket", "owner", "zonegroup", "cluster", "tags"]),
+            'bucket_bytes_sent':
+                GaugeMetricFamily('radosgw_usage_bucket_bytes_sent',
+                                  'Number of bytes sent',
+                                  labels=["bucket", "owner", "cluster"]),
+            'bucket_bytes_received':
+                GaugeMetricFamily('radosgw_usage_bucket_bytes_received',
+                                  'Number of bytes received',
+                                  labels=["bucket", "owner", "cluster"]),
+            'bucket_successful_ops':
+                GaugeMetricFamily('radosgw_usage_bucket_successful_ops',
+                                  'Number of successful operations',
+                                  labels=["bucket", "owner", "cluster"]),
+            'bucket_ops':
+                GaugeMetricFamily('radosgw_usage_bucket_ops',
+                                  'Number of operations',
+                                  labels=["bucket", "owner", "cluster"]),
             'bucket_utilized_bytes':
                 GaugeMetricFamily('radosgw_usage_bucket_utilized_bytes',
                                   'Bucket utilized bytes',
@@ -566,6 +587,31 @@ class RADOSGWCollector(object):
         else:
             # Hammer junk, just skip it
             pass
+
+    def _update_bucket_usage_summary_metrics(self, user_entry):
+        if 'buckets' in user_entry:
+            for bucket in user_entry['buckets']:
+                bytes_sent = 0
+                successful_ops = 0
+                bytes_received = 0
+                ops = 0
+                if 'categories' in bucket:
+                    for category in bucket['categories']:
+                        bytes_sent = bytes_sent + category['bytes_sent']
+                        bytes_received = bytes_received + category['bytes_received']
+                        ops = ops + category['ops']
+                        successful_ops = successful_ops + category['successful_ops']
+
+                bucket_name = bucket['bucket']
+                bucket_owner = bucket['owner']
+                self._prometheus_metrics['bucket_ops'].add_metric(
+                    [bucket_name, bucket_owner, self.cluster_name], ops)
+                self._prometheus_metrics['bucket_successful_ops'].add_metric(
+                    [bucket_name, bucket_owner, self.cluster_name], successful_ops)
+                self._prometheus_metrics['bucket_bytes_sent'].add_metric(
+                    [bucket_name, bucket_owner, self.cluster_name], bytes_sent)
+                self._prometheus_metrics['bucket_bytes_received'].add_metric(
+                    [bucket_name, bucket_owner, self.cluster_name], bytes_received)
 
     def _get_rgw_users(self):
         """
