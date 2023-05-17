@@ -595,12 +595,22 @@ class RADOSGWCollector(object):
                 successful_ops = 0
                 bytes_received = 0
                 ops = 0
+                creations = 0
+                deletions = 0
                 if 'categories' in bucket:
                     for category in bucket['categories']:
                         bytes_sent = bytes_sent + category['bytes_sent']
                         bytes_received = bytes_received + category['bytes_received']
                         ops = ops + category['ops']
                         successful_ops = successful_ops + category['successful_ops']
+                        if category['category'] == 'create_bucket':
+                            creations = category['successful_ops']
+                        elif category['category'] == 'delete_bucket':
+                            deletions = category['successful_ops']
+
+                # skip buckets deleter or never created
+                if creations == 0 or (creations-deletions) == 0:
+                    continue
 
                 bucket_name = bucket['bucket']
                 bucket_owner = bucket['owner']
