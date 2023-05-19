@@ -97,6 +97,8 @@ class RADOSGWCollector(object):
 
         # Update bucket summary
         if rgw_usage:
+            if DEBUG:
+                print('RGW usage\n', (json.dumps(rgw_usage, indent=4, sort_keys=True)))
             for entry in rgw_usage['entries']:
                 self._update_bucket_usage_summary_metrics(entry)
 
@@ -595,8 +597,8 @@ class RADOSGWCollector(object):
                 successful_ops = 0
                 bytes_received = 0
                 ops = 0
-                creations = 0
-                deletions = 0
+                creations = -1
+                deletions = -1
                 if 'categories' in bucket:
                     for category in bucket['categories']:
                         bytes_sent = bytes_sent + category['bytes_sent']
@@ -608,9 +610,14 @@ class RADOSGWCollector(object):
                         elif category['category'] == 'delete_bucket':
                             deletions = category['successful_ops']
 
-                # skip buckets deleter or never created
-                if creations == 0 or (creations-deletions) == 0:
+                # Skips buckets deleted or never created. This cover bucket that were already there before enabling the exporter
+                if (creations == -1 and deletions > 0) or creations == 0 or (creations >= 0 and (deletions-creations) >= 0):
+                    if DEBUG:
+                        print('Bucket', bucket['bucket'], 'deleted or never created. skipping...')
                     continue
+
+                if DEBUG:
+                    print('Bucket usage summary', (json.dumps(bucket, indent=4, sort_keys=True)))
 
                 bucket_name = bucket['bucket']
                 bucket_owner = bucket['owner']
@@ -734,7 +741,6 @@ def parse_args():
         help='Port to listen',
         default=int(os.environ.get('VIRTUAL_PORT', '9242'))
     )
-
     parser.add_argument(
         '-c', '--cluster',
         required=False,
