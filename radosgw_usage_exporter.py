@@ -16,6 +16,8 @@ from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGIS
 
 logging.basicConfig(level=logging.DEBUG)
 DEBUG = int(os.environ.get('DEBUG', '0'))
+SKIP_DELETED_BUCKET = int(os.environ.get('SKIP_DELETED_BUCKET', '1'))
+SKIP_DELETED_USER = int(os.environ.get('SKIP_DELETED_USER', '1'))
 
 
 class RADOSGWCollector(object):
@@ -68,7 +70,7 @@ class RADOSGWCollector(object):
         # setup empty prometheus metrics
         self._setup_empty_prometheus_metrics()
 
-        # setup dict for aggregating bucket usage accross "bins"
+        # setup dict for aggregating bucket usage across "bins"
         self.usage_dict = defaultdict(dict)
         self.user_buckets = defaultdict(dict)
         rgw_usage = self._request_data(query='usage', args='show-summary=True')
@@ -86,21 +88,24 @@ class RADOSGWCollector(object):
                 self._get_bucket_usage(bucket)
 
         if rgw_users:
+            if DEBUG:
+                print('RGW users\n', rgw_users)
             for user in rgw_users:
                 self._get_user_quota(user)
                 self._get_user_info(user)
 
         # Update user summary
         if rgw_usage:
-            for entry in rgw_usage['summary']:
-                self._update_usage_summary_metrics(entry)
+            for user_summary in rgw_usage['summary']:
+                if not self._skip_user(user_summary, rgw_users):
+                    self._update_usage_summary_metrics(user_summary)
 
         # Update bucket summary
         if rgw_usage:
             if DEBUG:
                 print('RGW usage\n', (json.dumps(rgw_usage, indent=4, sort_keys=True)))
             for entry in rgw_usage['entries']:
-                self._update_bucket_usage_summary_metrics(entry)
+                self._update_bucket_usage_summary_metrics(entry, rgw_users)
 
         duration = time.time() - start
         self._prometheus_metrics['scrape_duration_seconds'].add_metric(
@@ -392,9 +397,49 @@ class RADOSGWCollector(object):
                                   labels=["category"]),
         }
 
+    def _skip_bucket(self, bucket):
+        if not SKIP_DELETED_BUCKET:
+            return False
+
+        creations = -1
+        deletions = -1
+        if 'categories' in bucket:
+            for category in bucket['categories']:
+                if 'category' in category:
+                    if category['category'] == 'create_bucket':
+                        creations = category['successful_ops']
+                    elif category['category'] == 'delete_bucket':
+                        deletions = category['successful_ops']
+
+        # Skips bucket deleted or never created. This cover bucket that were already there before enabling the exporter
+        if (creations == -1 and deletions > 0) or creations == 0 or (creations >= 0 and (deletions - creations) >= 0):
+            if DEBUG:
+                print('Bucket', bucket['bucket'], 'deleted or never created. skipping...')
+            return True
+
+        return False
+
+
+    def _skip_user(self, user, rgw_users):
+        if not SKIP_DELETED_USER:
+            return False
+
+        if 'owner' in user:
+            u = user['owner']
+        # Luminous
+        elif 'user' in user:
+            u = user['user']
+
+        if u not in rgw_users:
+            print('User', u, 'deleted or never created. skipping...')
+            return True
+
+        return False
+
+
     def _get_usage(self, entry):
         """
-        Recieves JSON object 'entity' that contains all the buckets relating
+        Receives JSON object 'entity' that contains all the buckets relating
         to a given RGW UID. Builds a dictionary of metric data in order to
         handle UIDs where the usage data is truncated into multiple 1000
         entry bins.
@@ -412,6 +457,9 @@ class RADOSGWCollector(object):
         for bucket in entry['buckets']:
             if DEBUG:
                 print((json.dumps(bucket, indent=4, sort_keys=True)))
+
+            if self._skip_bucket(bucket):
+                continue
 
             if not bucket['bucket']:
                 bucket_name = "bucket_root"
@@ -433,12 +481,16 @@ class RADOSGWCollector(object):
 
     def _update_usage_metrics(self):
         """
-        Update promethes metrics with bucket usage data
+        Update prometheus metrics with bucket usage data
         """
 
         for bucket_owner in list(self.usage_dict.keys()):
             for bucket_name in list(self.usage_dict[bucket_owner].keys()):
-                for category in list(self.usage_dict[bucket_owner][bucket_name].keys()):
+                bucket = self.usage_dict[bucket_owner][bucket_name]
+                if self._skip_bucket(bucket):
+                    continue
+
+                for category in list(bucket.keys()):
                     data_dict = self.usage_dict[bucket_owner][bucket_name][category]
                     self._prometheus_metrics['ops'].add_metric(
                         [bucket_name, bucket_owner, category, self.cluster_name],
@@ -467,6 +519,8 @@ class RADOSGWCollector(object):
         elif 'user' in summary:
             user = summary['user']
 
+        if DEBUG:
+            print('User summary', (json.dumps(summary, indent=4, sort_keys=True)))
         if 'categories' in summary:
             for category in summary['categories']:
                 self._prometheus_metrics['user_bytes_sent'].add_metric(
@@ -511,6 +565,9 @@ class RADOSGWCollector(object):
         Method get actual bucket usage (in bytes).
         Some skips and adjustments for various Ceph releases.
         """
+
+        if self._skip_bucket(bucket):
+            return
 
         if DEBUG:
             print((json.dumps(bucket, indent=4, sort_keys=True)))
@@ -590,37 +647,28 @@ class RADOSGWCollector(object):
             # Hammer junk, just skip it
             pass
 
-    def _update_bucket_usage_summary_metrics(self, user_entry):
+    def _update_bucket_usage_summary_metrics(self, user_entry, rgw_users):
         if 'buckets' in user_entry:
             for bucket in user_entry['buckets']:
+                bucket_name = bucket['bucket']
+                bucket_owner = bucket['owner']
+                if self._skip_bucket(bucket) or self._skip_user(bucket, rgw_users):
+                    continue
+
                 bytes_sent = 0
                 successful_ops = 0
                 bytes_received = 0
                 ops = 0
-                creations = -1
-                deletions = -1
                 if 'categories' in bucket:
                     for category in bucket['categories']:
                         bytes_sent = bytes_sent + category['bytes_sent']
                         bytes_received = bytes_received + category['bytes_received']
                         ops = ops + category['ops']
                         successful_ops = successful_ops + category['successful_ops']
-                        if category['category'] == 'create_bucket':
-                            creations = category['successful_ops']
-                        elif category['category'] == 'delete_bucket':
-                            deletions = category['successful_ops']
-
-                # Skips buckets deleted or never created. This cover bucket that were already there before enabling the exporter
-                if (creations == -1 and deletions > 0) or creations == 0 or (creations >= 0 and (deletions-creations) >= 0):
-                    if DEBUG:
-                        print('Bucket', bucket['bucket'], 'deleted or never created. skipping...')
-                    continue
 
                 if DEBUG:
                     print('Bucket usage summary', (json.dumps(bucket, indent=4, sort_keys=True)))
 
-                bucket_name = bucket['bucket']
-                bucket_owner = bucket['owner']
                 self._prometheus_metrics['bucket_ops'].add_metric(
                     [bucket_name, bucket_owner, self.cluster_name], ops)
                 self._prometheus_metrics['bucket_successful_ops'].add_metric(
@@ -653,7 +701,7 @@ class RADOSGWCollector(object):
         quota = self._request_data(query='user', args="quota&uid={0}&quota-type=user".format(user))
 
         if DEBUG:
-            print((json.dumps(quota, indent=4, sort_keys=True)))
+            print('User quota\n', (json.dumps(quota, indent=4, sort_keys=True)))
 
         self._prometheus_metrics['user_quota_enabled'].add_metric(
             [user, self.cluster_name], quota['enabled'])
@@ -671,7 +719,7 @@ class RADOSGWCollector(object):
         user_info = self._request_data(query='user', args="uid={0}&stats=True".format(user))
 
         if DEBUG:
-            print((json.dumps(user_info, indent=4, sort_keys=True)))
+            print('User info\n', (json.dumps(user_info, indent=4, sort_keys=True)))
 
         if 'display_name' in user_info:
             user_display_name = user_info['display_name']
